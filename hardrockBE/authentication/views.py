@@ -1,20 +1,19 @@
-from rest_framework import generics, status
+from django.utils.translation import gettext_lazy as _
+from django.shortcuts import get_object_or_404
+from rest_framework import generics, status, serializers
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
-from .models import User
-from . serializers import CartSerializer, AddCartItemSerializer, CartItemSerializer, UserCreationSerializer
-from rest_framework import serializers
 from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from rest_framework.mixins import CreateModelMixin, RetrieveModelMixin, DestroyModelMixin
-from .models import CartItem
-from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer, TokenBlacklistSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenBlacklistView
 from rest_framework_simplejwt.state import token_backend
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.utils.translation import gettext_lazy as _
-from .serializers import ChangePasswordSerializer
-
+from .models import User, CartItem
+from .serializers import (
+    CartSerializer, AddCartItemSerializer, CartItemSerializer, 
+    UserCreationSerializer, ChangePasswordSerializer
+)
 
 class AuthView(generics.GenericAPIView):
     queryset = User.objects.all()
@@ -22,13 +21,12 @@ class AuthView(generics.GenericAPIView):
     def get(self, request):
         return Response(data={"message": "Hello User"}, status=status.HTTP_200_OK)
 
-
 auth_view = AuthView.as_view()
-
 
 class UserCreateView(generics.GenericAPIView):
     queryset = User.objects.all()
     serializer_class = UserCreationSerializer
+    permission_classes = [AllowAny]
 
     def post(self, request):
         data = request.data
@@ -38,11 +36,8 @@ class UserCreateView(generics.GenericAPIView):
             return Response(data=serializer.data, status=status.HTTP_201_CREATED)
 
         return Response(data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    permission_classes = [AllowAny]
-
 
 user_create_view = UserCreateView.as_view()
-
 
 class CartViewSet(CreateModelMixin,
                   GenericViewSet,
@@ -51,7 +46,6 @@ class CartViewSet(CreateModelMixin,
     queryset = User.objects.prefetch_related('items__product').all()
     serializer_class = CartSerializer
     permission_classes = [IsAuthenticated]
-
 
 class CartItemViewSet(ModelViewSet):
     def get_serializer_class(self):
@@ -65,7 +59,6 @@ class CartItemViewSet(ModelViewSet):
     def get_queryset(self):
         return CartItem.objects.filter(cart_id=self.kwargs['cart_pk'])
     permission_classes = [IsAuthenticated]
-
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     default_error_messages = {
@@ -81,10 +74,8 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         data['phone_number'] = str(self.user.phone_number)
         return data
 
-
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
-
 
 class MyTokenRefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
@@ -95,10 +86,8 @@ class MyTokenRefreshSerializer(TokenRefreshSerializer):
         data.update({'id': user_uid})
         return data
 
-
 class MyTokenRefreshView(TokenRefreshView):
     serializer_class = MyTokenRefreshSerializer
-
 
 class MyTokenBlacklistSerializer(TokenBlacklistSerializer):
     refresh = serializers.CharField()
@@ -113,7 +102,6 @@ class MyTokenBlacklistSerializer(TokenBlacklistSerializer):
             pass
         return {}
 
-
 class MyTokenBlacklistView(TokenBlacklistView):
     serializer_class = MyTokenBlacklistSerializer
 
@@ -127,7 +115,7 @@ class ChangePasswordView(generics.UpdateAPIView):
     permission_classes = (IsAuthenticated,)
 
     def get_object(self, queryset=None):
-        obj = self.request.user
+        obj = get_object_or_404(User, id=self.request.user.id)
         return obj
 
     def update(self, request, *args, **kwargs):
@@ -138,8 +126,14 @@ class ChangePasswordView(generics.UpdateAPIView):
             # Check old password
             if not self.object.check_password(serializer.data.get("old_password")):
                 return Response({"old_password": ["Wrong password."]}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate new password
+            new_password = serializer.data.get("new_password")
+            if len(new_password) < 8:
+                return Response({"new_password": ["Password should be at least 8 characters long."]}, status=status.HTTP_400_BAD_REQUEST)
+            
             # set_password also hashes the password that the user will get
-            self.object.set_password(serializer.data.get("new_password"))
+            self.object.set_password(new_password)
             self.object.save()
             response = {
                 'status': 'success',
